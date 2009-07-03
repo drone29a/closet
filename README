@@ -1,0 +1,15 @@
+The clojure-cassandra project is a wrapper around the existing Java Thrift client for the Cassandra database.
+
+Usage:
+
+(require ['cassandra :as 'db])
+
+(def client (db/make-client "host" port))
+
+(db/insert client "table" "key" "column-parent" {:col-a (.getBytes "alice" "UTF-8") 
+                                              :col-b (.getBytes "bob" "UTF-8"})
+
+(into {} (map (fn [[k v]] [k (String. v)]) 
+              (db/get client "table" "key" "column-parent" [:col-a :col-b])))
+
+;; Returns: {:col-a "alice" :col-b "bob"} 
