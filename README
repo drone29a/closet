@@ -1,15 +1,26 @@
 The clojure-cassandra project is a wrapper around the existing Java Thrift client for the Cassandra database.
 
+***NOTE: This is a pre-release release.  At this time, insertion, retrieval, and removal of simple column families appears to work.  Tests and super column support will be added soon.***
+
 Usage:
 
 (require ['cassandra :as 'db])
+(use ['clojure.contrib.json 'read 'write])
 
 (def client (db/make-client "host" port))
 
-(db/insert client "table" "key" "column-parent" {:col-a (.getBytes "alice" "UTF-8") 
-                                              :col-b (.getBytes "bob" "UTF-8"})
+(db/insert client "table" "key" "column-parent" {:col-a "just a string" 
+                                                 :col-b (json-str [1 2 3 4 5 "six" 7.0])})
 
-(into {} (map (fn [[k v]] [k (String. v)]) 
-              (db/get client "table" "key" "column-parent" [:col-a :col-b])))
+;; Fetch results, using default decoding of UTF-8 strings
+(db/fetch client "table" "key" "column-parent" [:col-a :col-b])
+; Returns: {:col-b "[1,2,3,4,5,\"six\",7.0]", :col-a "just a string"} 
 
-;; Returns: {:col-a "alice" :col-b "bob"} 
+;; Fetch the results, but use custom decoding
+(db/fetch client 
+          "table" 
+          "key" 
+          "column-parent" 
+          {:col-a (fn [bytes] (apply str (map #(Integer/toHexString (int %)) bytes)))
+           :col-b (fn [bytes] (read-json-string (String. bytes "UTF-8")))}
+; Returns: {:col-b [1 2 3 4 5 "six" 7.0], :col-a "6a757374206120737472696e67"}
