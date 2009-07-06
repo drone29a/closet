@@ -71,7 +71,7 @@ and :decoder for serializing and reconstructing stored data."
 (defmethod get [::standard ::single]
   [table key family-kw col-kw & opts]
   (get-column table key family-kw col-kw (first opts)))
-(defmethod get [::super ::single]
+(defmethod get [::standard ::batch]
   [table key family-kw col-kws & opts]
   (get-slice-by-names table key family-kw col-kws (first opts)))
 

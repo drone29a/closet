@@ -1,6 +1,6 @@
 The clojure-cassandra project is a wrapper around the existing Java Thrift client for the Cassandra database.
 
-***NOTE: This is a pre-release release.  At this time, insertion, retrieval, and removal of simple column families appears to work.  Tests and super column support will be added soon.***
+***NOTE: This is a pre-release release.  Single, standard column puts and both single and batch, standard column gets work.***
 
 Usage:
 
