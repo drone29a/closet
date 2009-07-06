@@ -1,109 +1,87 @@
 (ns cassandra
+  (:refer-clojure :exclude [get remove])
+  (:require [cassandra.thrift :as thrift])
+  (:use [clojure.contrib.json.read :only [read-json-string]] 
+        [clojure.contrib.json.write :only [json-str]] 
+        cassandra.util
+        cassandra.thrift)
   (:import (org.apache.cassandra.service Cassandra$Client column_t batch_mutation_t)
            (org.apache.thrift.transport TSocket)
            (org.apache.thrift.protocol TBinaryProtocol)))
 
+(declare make-table
+         family-type-and-single-or-batch)
+
 (defn make-client
-  [host port]
-  (let [t (TSocket. host port)
-        p (TBinaryProtocol. t)]
-    (.open t)
-    (proxy [Cassandra$Client] [p]
-      (transport [] t)
-      (close [] (.close t)))))
+  "Create a client map containing relevant bits for interfacing with Cassandra.
+Require a host and port, the caller may include and options map to indicate an :encoder 
+and :decoder for serializing and reconstructing stored data."
+  [host port & opts]
+  (let [opts (first opts)
+        encoder (:encoder opts)
+        decoder (:decoder opts)
+        t (TSocket. host port)
+        p (TBinaryProtocol. t)
+        c (do (.open t)
+              (proxy [Cassandra$Client] [p]
+                (transport [] t)
+                (close [] (.close t))))]
+    {:thrift-client c
+     :tables (into {} (map (fn [t] [(:name t) t]) 
+                           (map #(make-table %1 %2 %3 %4) 
+                                (repeat c) 
+                                (.getStringListProperty c "tables")
+                                (repeat (fn [data] (-> (json-str data)
+                                                       (.getBytes "UTF-8"))))
+                                (repeat (fn [bytes] (-> (String. bytes "UTF-8") 
+                                                        read-json-string))))))}))
 
-(def #^{:doc "Use this hierarchy to modify dispatch of the ->bytes multimethod."} 
-     ->bytes-hierarchy (make-hierarchy))
+(defn- make-table
+  "Make a table object that references an existing Cassandra table."
+  [client table-name default-encoder default-decoder]
+  (let [schema (parse-table-schema (.describeTable client table-name))]
+    {:type ::table
+     :client client
+     :name (keyword table-name)
+     :families schema
+     :encoder default-encoder
+     :decoder default-decoder}))
 
-(defn col-path
-  [col-parent col]
-  (str col-parent ":" col))
+(defn family-type-and-single-or-batch
+  [t k f c-or-cs & r] 
+  [(-> t :families f :type) 
+   (if (and (coll? c-or-cs)
+            (> (count c-or-cs) 1))
+     ::batch
+     ::single)])
 
-(defn map->column_t
-  [m]
-  (column_t. (:name m)
-             (:value m)
-             (:timestamp m)))
+(defmulti put family-type-and-single-or-batch)
+(defmethod put [::standard ::single]
+  [table key family-kw col-val & opts]
+  (insert-single table key family-kw col-val (first opts)))
 
-(defn column_t->map
-  [c]
-  {:name (.columnName c)
-   :value (.value c)
-   :timestamp (.timestamp c)})
+(comment      
+  (insert-batch table key {(strify parent) (map (fn [k v]
+                                                  {:name (strify k)
+                                                   :value (->bytes v)
+                                                   :timestamp (System/currentTimeMillis)})
+                                                ks vs)}))
 
-(defn- strify
-  [keyword-or-other]
-  (if (keyword? keyword-or-other)
-    (name keyword-or-other)
-    (str keyword-or-other)))
+(defmulti get family-type-and-single-or-batch)
+(defmethod get [::standard ::single]
+  [table key family-kw col-kw & opts]
+  (get-column table key family-kw col-kw (first opts)))
+(defmethod get [::super ::single]
+  [table key family-kw col-kws & opts]
+  (get-slice-by-names table key family-kw col-kws (first opts)))
 
-(defmulti ->bytes 
-  "Convert a type to bytes for storage in Cassandra." 
-  type :hierarchy #'->bytes-hierarchy)
-(defmethod ->bytes :default [x]
-  (.getBytes (str x) "UTF-8"))
-
-(defn insert-single
-  ([client table key col-parent col data]
-     (insert-single client table key col-parent col data (System/currentTimeMillis)))
-  ([client table key col-parent col data timestamp]
-     (insert-single client table key col-parent col data timestamp -1))
-  ([client table key col-parent col data timestamp block-for]
-     (let [col-path (col-path col-parent col)]
-       (.insert client table key col-path data timestamp block-for))))
-
-(defn insert-batch
-  ([client table key cfmap]
-     (insert-batch client table key cfmap -1))
-  ([client table key cfmap block-for]
-     (let [cfm (into {} (map (fn [[k v]] 
-                               [k (map map->column_t v)])
-                             cfmap))]
-       (.batch_insert client (batch_mutation_t. table key cfm) block-for))))
-
-(defn insert 
-  [client table key parent colmap]
-  (let [ks (keys colmap)
-        vs (vals colmap)]
-    (if (== 1 (count ks))
-      (insert-single client table key parent (strify (first ks)) (->bytes (first vs)))
-      (insert-batch client table key {(strify parent) (map (fn [k v]
-                                                             {:name (strify k)
-                                                              :value (->bytes v)
-                                                              :timestamp (System/currentTimeMillis)})
-                                                           ks vs)}))))
-
-(defn get-column
-  ([client table key col-parent col]
-     (let [c (.get_column client table key (col-path col-parent col))]
-       {:name (.columnName c)
-        :value (.value c)
-        :timestamp (.timestamp c)})))
-
-(defn get-slice
-  ([client table key col-parent]
-     (get-slice client table key col-parent -1 -1))
-  ([client table key col-parent start count]
-     (.get_slice client table key col-parent start count)))
-
-(defn get-slice-by-names
-  [client table key col-parent cols]
-  (map column_t->map 
-       (.get_slice_by_names client table key col-parent cols)))
-
-(defn fetch 
-  {:arglists '([client table key parent cols])}
-  [client table key parent cols]
-  (let [cols->decoder (if (map? cols)
-                        cols
-                        (into {} (map #(vector % (fn [bytes] (String. bytes "UTF-8")))
-                                      cols)))]
-    (into {} (map (fn [result]
-                    (let [kw-name (keyword (:name result))]
-                      [kw-name ((cols->decoder kw-name) (:value result))])) 
-                  (get-slice-by-names client table key parent (map strify (keys cols->decoder)))))))
-
-(defn delete
+(defmulti remove (fn [x & r] (:type x)))
+(defmethod remove ::family
+  ([family key]
+     1)
+  ([family key col]
+     2))
+(defmethod remove :default
   ([client table key parent]
      (.remove client table key parent (System/currentTimeMillis) -1))
   ([client table key parent col]
