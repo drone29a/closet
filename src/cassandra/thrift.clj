@@ -76,6 +76,7 @@
          (.get_slice_by_names (:client table) 
                               (name (:name table)) 
                               key 
+                              (name family-kw)
                               (map name col-kws)))))
 
 (defn col-path
