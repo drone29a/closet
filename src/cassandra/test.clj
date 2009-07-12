@@ -52,6 +52,7 @@
                   :weight {:male [65 75]
                            :female [50 60]}}}
          (cdb/get *table* "dog" :breeds [:boxer]))))
+
 (deftest get-super-slice
   (is (= {:boxer {:color ["fawn" "brindle"]
                   :weight {:male [65 75]
