@@ -70,6 +70,7 @@
          (cdb/get *table* "dog" :breeds [:boxer :norwegian-elkhound])))
   ;; need to add timeline order test
   )
+
 (deftest put-standard-single
   (cdb/put *table* "dog" :sounds {:sigh "fatigue"})
   (is (= {:sigh "fatigue"} 
