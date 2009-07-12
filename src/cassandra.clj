@@ -3,8 +3,7 @@
   (:require [cassandra.thrift :as thrift])
   (:use [clojure.contrib.json.read :only [read-json-string]] 
         [clojure.contrib.json.write :only [json-str]] 
-        cassandra.util
-        cassandra.thrift)
+        cassandra.util)
   (:import (org.apache.cassandra.service Cassandra$Client column_t batch_mutation_t)
            (org.apache.thrift.transport TSocket)
            (org.apache.thrift.protocol TBinaryProtocol)))
@@ -39,7 +38,7 @@ and :decoder for serializing and reconstructing stored data."
 (defn- make-table
   "Make a table object that references an existing Cassandra table."
   [client table-name default-encoder default-decoder]
-  (let [schema (parse-table-schema (.describeTable client table-name))]
+  (let [schema (thrift/parse-table-schema (.describeTable client table-name))]
     {:type ::table
      :client client
      :name (keyword table-name)
@@ -56,33 +55,84 @@ and :decoder for serializing and reconstructing stored data."
      ::single)])
 
 (defmulti put family-type-and-single-or-batch)
+
 (defmethod put [::standard ::single]
   [table key family-kw col-val & opts]
-  (insert-single table key family-kw col-val (first opts)))
+  (let [opts (first opts)
+        encoder (or (:encoder opts)
+                    (-> table :families family-kw :encoder)
+                    (-> table :encoder))]
+    (thrift/insert-single (-> table :client) 
+                          (name (:name table)) 
+                          (strify key) 
+                          (name family-kw) 
+                          (zipmap (map name (keys col-val)) (vals col-val)) 
+                          encoder
+                          opts)))
 
-(comment      
-  (insert-batch table key {(strify parent) (map (fn [k v]
+(defmethod put [::standard ::batch]
+  [table key family-kw cols-vals & opts]
+  (let [opts (first opts)
+        encoder (or (:encoder opts)
+                    (-> table :families family-kw :encoder)
+                    (-> table :encoder))]
+    (thrift/insert-batch (-> table :client)
+                         (name (:name table)) 
+                         (strify key) 
+                         {(name family-kw) (map (fn [[k v]]
                                                   {:name (strify k)
-                                                   :value (->bytes v)
+                                                   :value v
                                                    :timestamp (System/currentTimeMillis)})
-                                                ks vs)}))
+                                                cols-vals)}
+                         encoder
+                         opts)))
 
 (defmulti get family-type-and-single-or-batch)
+
 (defmethod get [::standard ::single]
   [table key family-kw col-kw & opts]
-  (get-column table key family-kw col-kw (first opts)))
+  (let [opts (first opts)
+        decoder (or (:decoder opts)
+                    (-> table :families family-kw :decoder)
+                    (-> table :decoder))
+        as-column? (:as-column? opts)
+        col (thrift/get-column (-> table :client)
+                               (name (:name table)) 
+                               (strify key) 
+                               (name family-kw) 
+                               (name col-kw)
+                               decoder)]
+    (if as-column?
+      col
+      (hash-map (keyword (:name col)) (:value col)))))
+
 (defmethod get [::standard ::batch]
   [table key family-kw col-kws & opts]
-  (get-slice-by-names table key family-kw col-kws (first opts)))
+  (let [opts (first opts)
+        decoder (or (:decoder opts)
+                    (-> table :families family-kw :decoder)
+                    (-> table :decoder))
+        as-columns? (:as-columns? opts)
+        cols (thrift/get-slice-by-names (-> table :client)
+                                        (name (:name table)) 
+                                        (strify key) 
+                                        (name family-kw) 
+                                        (map name col-kws) 
+                                        decoder)]
+    (if as-columns?
+      cols
+      (into {} (map (fn [c]
+                      [(keyword (:name c)) (:value c)])
+                    cols)))))
 
-(defmulti remove (fn [x & r] (:type x)))
-(defmethod remove ::family
-  ([family key]
-     1)
-  ([family key col]
-     2))
-(defmethod remove :default
-  ([client table key parent]
-     (.remove client table key parent (System/currentTimeMillis) -1))
-  ([client table key parent col]
-     (.remove client table key (str parent ":" (strify col)) (System/currentTimeMillis) -1)))
+(defn remove
+  ([table key family-kw]
+     (thrift/remove (:client table) 
+                    (name (:name table)) 
+                    (strify key) 
+                    (name family-kw)))
+  ([table key family-kw col-kw]
+     (thrift/remove (:client table) 
+                    (name (:name table)) 
+                    (strify key) 
+                    (thrift/col-path (name family-kw) (strify col-kw)))))

@@ -2,6 +2,7 @@
     #^{:author "Matt Revelle"
        :doc "Calls to Cassandra's Thrift client"} 
   cassandra.thrift
+  (:refer-clojure :exclude [remove])
   (:use [clojure.contrib.str-utils :only [re-split]]
         cassandra.util)
   (:import (org.apache.cassandra.service Cassandra$Client column_t batch_mutation_t)
@@ -11,73 +12,77 @@
 (declare col-path
          map->column_t
          column_t->map
-         decode-column)
+         decode-column
+         parse-table-schema)
 
 (defn insert-single
-  [table key family-kw col-val & opts]
-  (let [encoder (or (:encoder opts)
-                    (-> table :families family-kw :encoder)
-                    (:encoder table))
-        timestamp (or (:timestamp opts)
+  [client table key family col-val encoder & opts]
+  (let [timestamp (or (:timestamp opts)
                       (System/currentTimeMillis))
         block-for (or (:block-for opts)
-                      -1)]
-    (.insert (:client table) 
-             (name (:name table)) 
+                      0)]
+    (.insert client 
+             table 
              key 
-             (col-path (name family-kw) (name (first (keys col-val))))
+             (col-path family (first (keys col-val)))
              (encoder (first (vals col-val))) 
              timestamp 
              block-for)))
 
 (defn insert-batch
-  ([client table key cfmap]
-     (insert-batch client table key cfmap -1))
-  ([client table key cfmap block-for]
-     (let [cfm (into {} (map (fn [[k v]] 
-                               [k (map map->column_t v)])
-                             cfmap))]
-       (.batch_insert client (batch_mutation_t. table key cfm) block-for))))
+  [client table key fam-col-val encoder & opts]
+  (let [opts (first opts)
+        block-for (or (:block-for opts)
+                      0)
+        fam-col-val (into {} (map (fn [[k v]] 
+                                    [k (map (fn [m] 
+                                              (map->column_t (assoc m :value 
+                                                                    (encoder (:value m))))) 
+                                            v)])
+                          fam-col-val))]
+    (.batch_insert client (batch_mutation_t. table key fam-col-val) block-for)))
 
 (defn get-column
-  ([table key family-kw col-kw & opts]
-     (let [client (:client table)
-           decoder (or (:decoder opts)
-                       (-> table :families family-kw :decoder)
-                       (:decoder table))]
-       (decode-column decoder 
-                      (column_t->map (.get_column client 
-                                                  (name (:name table)) 
-                                                  key 
-                                                  (col-path (name family-kw) (name col-kw))))))))
+  [client table key family col decoder]
+  (decode-column decoder 
+                 (column_t->map (.get_column client 
+                                             table 
+                                             key 
+                                             (col-path family col)))))
 
 (defn get-slice
-  [table key family-kw & opts]
+  [client table key family decoder & opts]
   (let [opts (first opts)
-        start (get opts :start -1)
-        count (get opts :count -1)
-        decoder (or (:decoder opts)
-                    (-> table :families family-kw :decoder)
-                    (:decoder table))]
+        ascending? (get opts :start true)
+        count (get opts :count -1)]
     (map (comp #(decode-column decoder %) column_t->map) 
          (.get-slice (:client table) 
-                     (name (:name table)) 
+                     table 
                      key 
-                     (name family-kw) 
-                     start 
+                     family 
+                     ascending?
                      count))))
 
 (defn get-slice-by-names
-  [table key family-kw col-kws & opts]
-  (let [decoder (or (:decoder opts)
-                    (-> table :families family-kw :decoder)
-                    (:decoder table))]
-    (map (comp #(decode-column decoder %) column_t->map) 
-         (.get_slice_by_names (:client table) 
-                              (name (:name table)) 
-                              key 
-                              (name family-kw)
-                              (map name col-kws)))))
+  [client table key family cols decoder & opts]
+  (map (comp #(decode-column decoder %) column_t->map) 
+       (.get_slice_by_names client
+                            table 
+                            key 
+                            family
+                            cols)))
+
+(defn remove
+  [client table key col-path-or-parent & opts]
+  (let [opts (first opts)
+        timestamp (get opts :timestamp (System/currentTimeMillis))
+        block-for (get opts :block-for 0)]
+    (.remove client
+             table
+             key
+             col-path-or-parent
+             timestamp
+             block-for)))
 
 (defn col-path
   [col-parent col]
