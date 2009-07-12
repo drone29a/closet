@@ -128,7 +128,7 @@
   (put-super-single)
   (put-super-batch))
 
-(comment (defn test-ns-hook
-           []
-           (get-tests)
-           (put-tests)))
+(defn test-ns-hook
+  []
+  (get-tests)
+  (put-tests))
