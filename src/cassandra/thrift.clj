@@ -17,10 +17,8 @@
 
 (defn insert-single
   [client table key family col-val encoder & opts]
-  (let [timestamp (or (:timestamp opts)
-                      (System/currentTimeMillis))
-        block-for (or (:block-for opts)
-                      0)]
+  (let [timestamp (get opts :timestamp (System/currentTimeMillis))
+        block-for (get opts :block-for 0)]
     (.insert client 
              table 
              key 
@@ -32,8 +30,7 @@
 (defn insert-batch
   [client table key fam-col-val encoder & opts]
   (let [opts (first opts)
-        block-for (or (:block-for opts)
-                      0)
+        block-for (get opts :block-for 0)
         fam-col-val (into {} (map (fn [[k v]] 
                                     [k (map (fn [m] 
                                               (map->column_t (assoc m :value 
