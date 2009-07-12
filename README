@@ -1,16 +1,16 @@
 The clojure-cassandra project is a wrapper around the existing Java Thrift client for the Cassandra database.
 
-***NOTE: This is a pre-release release.  Single, standard column puts and both single and batch, standard column gets work.***
-
 Usage:
 
-(require ['cassandra :as 'db])
+(require ['cassandra :as 'cdb])
 
-(def client (db/make-client "host" port))
+;; Create a client and grab a table
+(def client (cdb/make-client "host" port))
 (def table (-> client :tables :SomeTable))
 
+;; Put some data
 (db/put table "key" :family {:col-a [1 2 3 4 5 "six" 7.0]})
 (db/put table "key" :family {:col-b "another column"})
 
 ;; Get column values
-(db/get table "key" :family [:col-a :col-b])
+(cdb/get table "key" :family [:col-a :col-b])
