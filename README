@@ -9,8 +9,8 @@ Usage:
 (def table (-> client :tables :SomeTable))
 
 ;; Put some data
-(db/put table "key" :family {:col-a [1 2 3 4 5 "six" 7.0]})
-(db/put table "key" :family {:col-b "another column"})
+(cdb/put table "key" :family {:col-a [1 2 3 4 5 "six" 7.0]})
+(cdb/put table "key" :family {:col-b "another column"})
 
 ;; Get column values
 (cdb/get table "key" :family [:col-a :col-b])
