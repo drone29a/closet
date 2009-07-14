@@ -26,7 +26,6 @@
             *table* (-> *db* :tables :animals)]
     (doseq [[k v] (:standard test-data)]
       (doseq [[f cs] v]
-        (println f cs)
         (cdb/put *table* k f cs)))
     (f)
     (.close (:thrift-client *db*))))
@@ -35,7 +34,7 @@
 
 (deftest get-standard-single
   (is (= "angry" 
-         (cdb/get *table* "dog" :sounds [:growl]))))
+         (cdb/get *table* "dog" :sounds :growl))))
 
 (deftest get-standard-slice
   (is (= {:growl "angry" :laugh "happy"} 
